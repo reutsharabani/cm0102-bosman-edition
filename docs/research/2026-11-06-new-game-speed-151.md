@@ -68,6 +68,29 @@ The save part bosman_season.dat of a new game holds the changed competition name
 
 ## What is left
 
-- "Creating Shortlists" is still the longest step for a few nations. Its time is the straight code of 0x83f3a0 for each candidate that passes the first tests, value_player_for_club 0x840d80 and the work permit test.
+- "Creating Shortlists" is still the longest step. After the vacancy index below, the time that is left is the straight code of fill_shortlist_slot 0x83f3a0, get_future_transfer 0x8cca10 and the contract loads of 0x4cf5a0.
 - "Initialising Leagues" with all nations is match play before the start date.
 - "Player histories" with all nations still sorts the whole list after each new row. A faster exact sort must give the same order of equal rows and the same stack bytes.
+
+## The vacancy list (8 November 2026)
+
+A December 2025 start, every league, season 2025/26, `faster_days` and `changing_rules` on, dummy video and audio. The clock is thread CPU, so the holiday and the clicks are not in it. The same run's progress clock is in brackets. Before is the tree without the index. After is the index and a host copy of get_contract 0x4cf5a0.
+
+| Step | Before | After |
+|---|---|---|
+| Creating Shortlists | 55.6 s (66.6 s) | 45.5 s (56.5 s) |
+| Initialising Leagues | 20.6 s (20.5 s) | 21.4 s (21.3 s) |
+| Create game, other than the leagues | 16.5 s | 16.0 s |
+
+The index was built 104 times and answered 217,716,172 searches. The walk of 0x69fc60 left the top of the samples. get_contract did not: its hottest instruction was 3,326 samples before and 3,368 after, so that time is the loads of the contract table, not the translated instructions. The host copy stays because it gives the same registers and the check covered it.
+
+Played days did not fall by a clear amount. Dates 192 to 204 of 2025 (11 to 23 July) took 21.8 s in matches before and 22.0 s after, and 5.3 s and 5.9 s in the daily staff update. The raw day totals are 98.1 s and 98.2 s, and the second run played further into 24 July, because the start finished sooner and the run ends on a fixed wait. The top of the day samples is now the body of 0x83f3a0, the same contract loads, get_future_transfer 0x8cca10 and the matches.
+
+RECOMP_HOT=check on that start, through the shortlists and on to 18 July: 930,535,131 calls equal, and the program exited 0. The self-test compares the index with the recompiled walk, including a changed tail id, a dropped index and a shorter count.
+
+What is still slow, from the samples after the change (Creating Shortlists, 45.5 s):
+
+- fill_shortlist_slot 0x83f3a0 itself. The hottest instruction, a loop compare at +0x2a43 of the recompiled function, is 9.1 %. A copy of only the first tests of that loop was tried in November and did not help.
+- get_contract 0x4cf5a0, now host code, 7.4 %. One load from the contract table per candidate.
+- get_future_transfer 0x8cca10, 4.5 %. It builds a temporary linked list and walks it. A host copy has to match that frame, including the SEH words.
+- Initialising Leagues is still the match engine (17.3 s of 21.4 s). A split across cores has to keep the one RNG cursor 0x90cfc0 and the writes to the shared tables in the same order, or the game changes. The same RNG is still in the played-day samples. The match engine is about a quarter of a played day.
