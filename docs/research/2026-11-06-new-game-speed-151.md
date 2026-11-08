@@ -94,3 +94,23 @@ What is still slow, from the samples after the change (Creating Shortlists, 45.5
 - get_contract 0x4cf5a0, now host code, 7.4 %. One load from the contract table per candidate.
 - get_future_transfer 0x8cca10, 4.5 %. It builds a temporary linked list and walks it. A host copy has to match that frame, including the SEH words.
 - Initialising Leagues is still the match engine (17.3 s of 21.4 s). A split across cores has to keep the one RNG cursor 0x90cfc0 and the writes to the shared tables in the same order, or the game changes. The same RNG is still in the played-day samples. The match engine is about a quarter of a played day.
+
+## What was tried on the candidate loop (8 November 2026)
+
+The same December 2025 start, every league, 2025/26. Creating Shortlists is one call of fill_shortlist_slot 0x83f3a0 per slot (8577 slots). The candidate loop is 0x83fa25..0x840a99. The staff index the slot keeps is the store at 0x840ad0. A log of that index, with the loop left as the recompiled code, is 3552 lines. That log is the behaviour check below. Thread CPU of that step on the vacancy-index binary is 45.5 s.
+
+sort_position_lists 0x83a780 sorts each list with shortlist_compare_by_value_then_key 0x83b670 (the pushes at 0x83a98b and 0x83a9a4, the call 0x945333). The compare returns the signed difference of the dwords at entry + 8. The reject at 0x83fbad is the value test at 0x83fb97 (the slot requirement at slot + 7 against that dword times the double at 0x968de8). Ending the candidate loop at the first such reject, on the theory that every later entry costs at least as much, changed the log (3616 lines, 3503 positions different) and the step was 48.3 s. A later entry is still chosen after an earlier one has failed that test, so the list is not a safe cutoff while the loop runs.
+
+A host walk that rejects a candidate before 0x83fcbb and then runs the recompiled body for the rest was measured the same way:
+
+| Host rejects | Shortlist lines | Positions different from the recompiled loop | Creating Shortlists |
+|---|---|---|---|
+| Same player, a human, job bytes 0x3d and 0x28 equal to 5, a vacancy, and a candidate with no link on the path from 0x83fbdf | 3552 | 0 | 61.1 s |
+| Those, plus the computer-club tests from 0x83fb1e through the age test at 0x83fb8d | 3567 | 3497 | 48.4 s |
+| Those, plus the loan test 0x544590, the value test and the club and contract-nibble rejects at 0x83fc56..0x83fcb5 | 3552 on one build, then 3641 after the same source was rebuilt | 0, then 3516 | 45.1 s, then 45.8 s |
+
+The walk that matched spent its time on the same random staff and contract loads as the prefix it skipped, and the call at the top of every candidate made the step slower (61.1 s against 45.5 s). The tests after 0x83faa7 are not free of the call they skip. 0x600a50's path at 0x600be5 calls club_is_national_team 0x5409b0 before it returns. Skipping that call and applying the later rejects changed which staff were shortlisted. Rejoining the recompiled body at 0x83fcbb, and a host wage for the path from 0x83fbdf (0x85fa00 and Date::days_since 0x54cdb0), also changed the log (3641 and 3592 lines). The wage run was the only one under 45 s (37.4 s) and it shortlisted different staff.
+
+Compiling the generated file that holds 0x83f3a0 at -O3, with the loop unchanged, also changed the log (3515 lines) and the step was 51.3 s. The generated files stay at -O1.
+
+Initialising Leagues was 21.4 to 21.8 s in these runs, of which the matches were about 17.5 s. Nothing in the candidate loop changes that. The samples there are spread across the match engine, not one instruction. A faster match has to play the same match. The RNG at 0x90cfc0 can move and the season still has to read as the same kind of game; the shortlist log cannot, because a different staff index is a different signing.
