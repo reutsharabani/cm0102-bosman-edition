@@ -114,3 +114,24 @@ The walk that matched spent its time on the same random staff and contract loads
 Compiling the generated file that holds 0x83f3a0 at -O3, with the loop unchanged, also changed the log (3515 lines) and the step was 51.3 s. The generated files stay at -O1.
 
 Initialising Leagues was 21.4 to 21.8 s in these runs, of which the matches were about 17.5 s. Nothing in the candidate loop changes that. The samples there are spread across the match engine, not one instruction. A faster match has to play the same match. The RNG at 0x90cfc0 can move and the season still has to read as the same kind of game; the shortlist log cannot, because a different staff index is a different signing.
+
+## The screens and the simulation are different calls
+
+The human turn is `game_run_human_turn` 0x5cde40 (the day loop calls it at 0x5cdbf9 and 0x5cdc0a). It pushes the news or team screen and runs the screen loop. The start of a game does not. `game_run_to_start_date` 0x5cc850 calls `play_matches` 0x6b4360 at 0x5cc96e and `create_initial_shortlists` 0x83a1b0 at 0x5ccc91. `play_matches` opens the live match screens only for a match that is watched. The shortlist search does not open a screen. The Bosman Edition already replaces logic of that kind (the season rules, the vacancy index) and leaves the screens on the recompiled code. The check is the recompiled function, or the staff index stored at 0x840ad0.
+
+A count of where each candidate of the December 2025 shortlist leaves the loop, with the loop itself unchanged (266,378,247 candidates):
+
+| Where | Candidates |
+|---|---|
+| Wage reject 0x83fc34, or the cap reject 0x83fc50 | 52,713,469 and 8,020,518 |
+| Past the cheap filters, at 0x83fcbb | 87,037,590 |
+| Leave at 0x83fd51, 0x83fdae, 0x83fdca, 0x83fdf8 or 0x83fe26, before the future-transfer call | 16,038,974, 2,245, 1,581,560, 12,729 and 416,615 |
+| Call get_future_transfer 0x8cca10, and none of them is rejected at 0x83fed2 | 68,985,467 |
+| Leave at 0x83ff4f, 0x83ff7c, 0x83ffa3, 0x83ffca, 0x840009 or 0x84001f | 11,302,332, 13,339,783, 7,344,388, 4,495,972, 461,854 and 340,003 |
+| Leave at 0x840058 | 19,859,770 |
+| Leave at 0x840142 | 10,781,514 |
+| Reach value_player_for_club 0x840d80, and a player is chosen at 0x840943 | 3,746,852 and 7,587 |
+
+The 45 s is those 87 million candidates. The largest single exit after the cheap filters is 0x840058. Only 3.7 million reach the valuation.
+
+get_future_transfer 0x8cca10 tests the byte at `[[this+0x86e] + id*8]` (0x8cca4c). Bit 0x10 clear jumps to 0x8ccb02, destroys the empty list and returns 0 (0x8ccb13, ret 8 at 0x8ccb27). The list constructor 0x68d020 and an empty destructor 0x68d040 (the head test at 0x68d048) touch only that stack list. A replacement that returned 0 on a clear bit, without building the list, took that path for every call of the run (68,769,136 clear, none searched). Creating Shortlists was 40.2 s. The staff log was 3616 lines and the same file as the value-cutoff run above, so the signings were not the recompiled loop's. The replacement is not in the game. A faster search still has to be that loop, and the staff index at 0x840ad0 has to match.
