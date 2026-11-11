@@ -132,6 +132,17 @@ A count of where each candidate of the December 2025 shortlist leaves the loop, 
 | Leave at 0x840142 | 10,781,514 |
 | Reach value_player_for_club 0x840d80, and a player is chosen at 0x840943 | 3,746,852 and 7,587 |
 
-The 45 s is those 87 million candidates. The largest single exit after the cheap filters is 0x840058. Only 3.7 million reach the valuation.
+The largest single exit after the cheap filters is 0x840058. Only 3.7 million reach the valuation. Skipping every instruction after 0x83fcbb, on a later run of the same start, left Creating Shortlists at 30.3 s (268,356,301 candidates, and no one was signed, because the tail is where the choice is made). The code before 0x83fcbb is the larger part of the step. The 87 million are the ones who pay for both.
 
-get_future_transfer 0x8cca10 tests the byte at `[[this+0x86e] + id*8]` (0x8cca4c). Bit 0x10 clear jumps to 0x8ccb02, destroys the empty list and returns 0 (0x8ccb13, ret 8 at 0x8ccb27). The list constructor 0x68d020 and an empty destructor 0x68d040 (the head test at 0x68d048) touch only that stack list. A replacement that returned 0 on a clear bit, without building the list, took that path for every call of the run (68,769,136 clear, none searched). Creating Shortlists was 40.2 s. The staff log was 3616 lines and the same file as the value-cutoff run above, so the signings were not the recompiled loop's. The replacement is not in the game. A faster search still has to be that loop, and the staff index at 0x840ad0 has to match.
+get_future_transfer 0x8cca10 tests the byte at `[[this+0x86e] + id*8]` (0x8cca4c). Bit 0x10 clear jumps to 0x8ccb02, destroys the empty list and returns 0 (0x8ccb13, ret 8 at 0x8ccb27). The list constructor 0x68d020 and an empty destructor 0x68d040 (the head test at 0x68d048) touch only that stack list. A replacement that returned 0 on a clear bit, without building the list, took that path for every call of the run (68,769,136 clear, none searched). Creating Shortlists was 40.2 s. The staff log was 3616 lines and the same file as the value-cutoff run above, so the signings were not the recompiled loop's. The replacement is not in the game. A later return that does match the epilogue was checked in the process: 68,237,279 clear calls, the registers, esp and fs:[0] the same on every one, and the staff index at 0x840ad0 the same 3558 lines as the recompiled function with the clock fixed. Creating Shortlists was 46.9 s. The clear path's cost is the load of that bit, which the return still does. It is not in the game either.
+
+## The next rows, brought in early (10 November 2026)
+
+The same start, the clock fixed (`RECOMP_FIXED_CLOCK`), every league. The candidate loop's staff record and contract row are not next to the list entry, and the list is ordered by value, not by id, so each candidate misses. At 0x83fa25 the loop now asks the host to bring in the staff record (both cache lines of the 110 bytes) and the contract row of the next six candidates. Nothing is written.
+
+| | Creating Shortlists | Candidates | Staff indexes at 0x840ad0 |
+|---|---|---|---|
+| The loop, clock fixed | 46.9 s | 260,321,401 | 3558 lines |
+| The same loop, the next rows brought in | 39.6 s | 260,321,401 | the same 3558 lines |
+
+A copy of the contract index word at `[0xae2d0c] + id*79` stayed equal to the table for every `get_contract` of that run (115,154 ids, 0 differences). The status byte at +0xb of the same row did not: 1,494,317 loads differed from a copy taken at the start of the search. Using the word copy in `get_contract` took 41.9 s and was left out. The status byte is still read from the row.

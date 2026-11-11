@@ -234,3 +234,9 @@ from match_day import INSNS as MATCH_DAY_INSNS  # noqa: E402
 
 assert not set(MATCH_DAY_INSNS) & (set(INSNS) | set(PATCHES))
 INSNS.update(MATCH_DAY_INSNS)
+
+# The shortlist candidate loop reads the next staff and contract rows before it reaches them.
+from shortlist_ahead import INSNS as SHORTLIST_AHEAD_INSNS  # noqa: E402
+
+assert not set(SHORTLIST_AHEAD_INSNS) & (set(INSNS) | set(PATCHES))
+INSNS.update(SHORTLIST_AHEAD_INSNS)
