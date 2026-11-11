@@ -24,6 +24,27 @@
  * data read. A node or data of 0 before the count ends gives the original's error box: the host copy finds
  * that before it writes, and then runs the recompiled code.
  *
+ * The index of 0x69fc60. fill_shortlist_slot searches the same job list for every candidate, and the walk
+ * was a fifth of "Creating Shortlists" on a December 2025 start with every league (the profile of 8 November
+ * 2026). The copy keeps a hash of the ids of one list. A search uses it when the list pointer, the count and
+ * the first node are the ones it was built for, and the first, middle and last nodes still hold the ids they
+ * held then. It then gives the same eax and edx as the walk: al 1 and edx the id when that id is in the
+ * hash, else al 0 and edx the last id. The linked-list members that change a list drop the index when the
+ * list is the one they change (0x68d040, 0x68d080, 0x68d0d0, 0x68d1f0, 0x68d280, 0x68d2f0; each takes the
+ * list in ecx, read from those functions). A found answer is not checked against a node, so a write of an
+ * id into an existing node that is not the first, the middle or the last, and that does not go through
+ * those members, would be missed until the next build. RECOMP_HOT=check compares every search with the
+ * recompiled code.
+ *
+ * 0x4cf5a0 CONTRACT_MANAGER::get_contract, thiscall (Staff *staff), ret 4. The same shortlist search calls
+ * it for every candidate (0x83fbf1 and the other calls in 0x83f3a0), and the body is 24 bytes (0x4cf5a0..
+ * 0x4cf5e1, read from the recompiled function). A null staff returns eax 0 and leaves edx. Otherwise the
+ * staff id is [staff]. When that id is signed-not-below [0xae2364] (jl at 0x4cf5b5), eax is 0 and edx is
+ * that limit. Otherwise edx becomes id * 79, and the signed word at [[0xae2d0c] + edx] is the contract
+ * index (0x4cf5c4..0x4cf5ce). A negative index returns eax 0 with edx still id * 79. Otherwise edx becomes
+ * [this] and eax becomes index * 80 + edx (0x4cf5d5..0x4cf5df). ecx and the other registers stay, and the
+ * function writes nothing below esp. No caller reads the flags.
+ *
  * The index of 0x7ae350 (item 151). The only caller of 0x7ae350 is is_staff_suitable_for_job 0x69f810
  * (0x69fa4b, ecx = the PLAYER_REGEN of [0xb7434c]), and add_job_vacancy 0x69ba50 calls that for each
  * member of staff. With all nations a 2025/26 start makes 790,068 searches of a list of many thousand
@@ -71,12 +92,20 @@
 #define LLIST_HAS 0x69fc60u
 #define HUMAN_CLUB 0x600a50u
 #define ATTR_VECTOR 0x53a610u
+#define GET_CONTRACT 0x4cf5a0u
 
 void o_007ae350(void);
 void o_0069fc60(void);
 void o_0069ba50(void);
 void o_0053a610(void);
 void o_00600a50(void);
+void o_004cf5a0(void);
+void o_0068d040(void);
+void o_0068d080(void);
+void o_0068d0d0(void);
+void o_0068d1f0(void);
+void o_0068d280(void);
+void o_0068d2f0(void);
 
 static void attr_vector_host(void);
 static int attr_vector_check(void);
@@ -138,6 +167,104 @@ static int64_t ridx_find(uint32_t list, uint32_t rows, uint32_t n, uint32_t id)
     return n;
 }
 
+/* The index of 0x69fc60: one linked list, open addressing on the id. */
+static struct {
+    uint32_t list;
+    int32_t n;
+    uint32_t first, mid_node, last_node;
+    uint32_t first_id, mid_id, last_id;
+    uint32_t mask;
+    uint32_t *ids;
+    int32_t *at;
+    int valid;
+} lidx;
+static uint64_t lidx_builds, lidx_hits;
+
+static uint32_t lidx_hash(uint32_t id) { return (id * 0x9e3779b1u) >> 7; }
+
+static void lidx_drop(uint32_t list)
+{
+    if (lidx.valid && list == lidx.list) lidx.valid = 0;
+}
+
+static int lidx_has(uint32_t id)
+{
+    uint32_t h = lidx_hash(id) & lidx.mask;
+    while (lidx.at[h] >= 0) {
+        if (lidx.ids[h] == id) return 1;
+        h = (h + 1) & lidx.mask;
+    }
+    return 0;
+}
+
+/* 1 when the stored list is still that list. The first, middle and last ids catch a rewrite of those nodes. */
+static int lidx_ok(uint32_t list, int32_t n, uint32_t first)
+{
+    if (!lidx.valid || lidx.list != list || lidx.n != n || lidx.first != first) return 0;
+    uint32_t data = rd32(g_mem, lidx.last_node);
+    if (!data || rd32(g_mem, data + 6) != lidx.last_id) return 0;
+    data = rd32(g_mem, first);
+    if (!data || rd32(g_mem, data + 6) != lidx.first_id) return 0;
+    if (lidx.mid_node) {
+        data = rd32(g_mem, lidx.mid_node);
+        if (!data || rd32(g_mem, data + 6) != lidx.mid_id) return 0;
+    }
+    return 1;
+}
+
+/* Walks the n nodes, fills the index and the result of this search. 0 when a node or its data is 0. */
+static int lidx_fill(uint32_t list, int32_t n, uint32_t node, uint32_t want, int *found, uint32_t *edx)
+{
+    uint32_t want_slots = 16;
+    lidx.valid = 0;
+    if (n > 1000000) return 0;
+    while (want_slots < (uint32_t)n * 2u) {
+        if (want_slots > 0x40000000u) return 0;
+        want_slots <<= 1;
+    }
+    if (want_slots - 1 != lidx.mask || !lidx.ids) {
+        free(lidx.ids);
+        free(lidx.at);
+        lidx.ids = malloc(want_slots * sizeof *lidx.ids);
+        lidx.at = malloc(want_slots * sizeof *lidx.at);
+        if (!lidx.ids || !lidx.at) { fprintf(stderr, "recomp: out of memory for the vacancy index\n"); abort(); }
+        lidx.mask = want_slots - 1;
+    }
+    memset(lidx.at, 0xff, want_slots * sizeof *lidx.at);
+    int got = 0;
+    uint32_t dx = *edx, cur = node, mid_node = 0, mid_id = 0, last_node = 0, last_id = 0;
+    for (int32_t i = 0; i < n; i++) {
+        if (!cur) return 0;
+        uint32_t data = rd32(g_mem, cur);
+        if (!data) return 0;
+        uint32_t id = rd32(g_mem, data + 6);
+        uint32_t h = lidx_hash(id) & lidx.mask;
+        while (lidx.at[h] >= 0 && lidx.ids[h] != id) h = (h + 1) & lidx.mask;
+        if (lidx.at[h] < 0) { lidx.ids[h] = id; lidx.at[h] = 0; }
+        if (!got) {
+            dx = id;
+            if (dx == want) got = 1;
+        }
+        if (i == n / 2) { mid_node = cur; mid_id = id; }
+        last_node = cur;
+        last_id = id;
+        cur = rd32(g_mem, cur + 6);
+    }
+    lidx.list = list;
+    lidx.n = n;
+    lidx.first = node;
+    lidx.first_id = rd32(g_mem, rd32(g_mem, node) + 6);
+    lidx.mid_node = mid_node;
+    lidx.mid_id = mid_id;
+    lidx.last_node = last_node;
+    lidx.last_id = last_id;
+    lidx.valid = 1;
+    lidx_builds++;
+    *found = got;
+    *edx = dx;
+    return 1;
+}
+
 static void list_has_host(void)
 {
     uint32_t esp = cpu.esp, arg = rd32(g_mem, esp + 4), eax = arg, edx = cpu.edx;
@@ -197,14 +324,13 @@ static int llist_has_host(void)
     uint32_t eax = list, edx = cpu.edx, node = rd32(g_mem, list + 2);
     int found = 0;
     if (n > 0) {
-        for (int32_t i = 0; i < n; i++) {
-            if (!node) return 0;
-            uint32_t data = rd32(g_mem, node);
-            if (!data) return 0;
-            node = rd32(g_mem, node + 6);
-            edx = rd32(g_mem, data + 6);
-            if (edx == rd32(g_mem, arg)) { found = 1; break; }
-        }
+        uint32_t want = rd32(g_mem, arg);
+        if (lidx_ok(list, n, node)) {
+            found = lidx_has(want);
+            edx = found ? want : lidx.last_id;
+            lidx_hits++;
+        } else if (!lidx_fill(list, n, node, want, &found, &edx))
+            return 0;
         if (!found) eax = (uint32_t)n;
         wr32(g_mem, esp - 0x214, 0x69fc8eu);
     }
@@ -513,6 +639,75 @@ RT_WRAP(007ab340, regen_writer_007ab340) { ridx.valid = 0; o_007ab340(); ridx.va
 void o_007adcd0(void); /* load_retire_dat */
 RT_WRAP(007adcd0, regen_writer_007adcd0) { ridx.valid = 0; o_007adcd0(); ridx.valid = 0; }
 
+/* 0x4cf5a0. The registers are those of the recompiled function; it writes nothing. */
+static void contract_host(void)
+{
+    uint32_t esp = cpu.esp, staff = rd32(g_mem, esp + 4), eax, edx;
+    if (!staff) {
+        eax = 0;
+        edx = cpu.edx;
+    } else {
+        uint32_t id = rd32(g_mem, staff), limit = rd32(g_mem, 0xae2364u);
+        if ((int32_t)id >= (int32_t)limit) {
+            eax = 0;
+            edx = limit;
+        } else {
+            uint32_t scale = id * 79u;
+            int32_t word = (int32_t)rd32(g_mem, rd32(g_mem, 0xae2d0cu) + scale);
+            if (word < 0) {
+                eax = 0;
+                edx = scale;
+            } else {
+                edx = rd32(g_mem, cpu.ecx);
+                eax = (uint32_t)word * 80u + edx;
+            }
+        }
+    }
+    cpu.eax = eax;
+    cpu.edx = edx;
+    cpu.esp = esp + 8;
+}
+
+static int contract_check(void)
+{
+    uint32_t low = cpu.esp - 0x10;
+    uint8_t before[0x10], host[0x10];
+    memcpy(before, g_mem + low, 0x10);
+    Cpu in = cpu;
+    contract_host();
+    Cpu want = cpu;
+    memcpy(host, g_mem + low, 0x10);
+    memcpy(g_mem + low, before, 0x10);
+    cpu = in;
+    o_004cf5a0();
+    int bad = want.eax != cpu.eax || want.ecx != cpu.ecx || want.edx != cpu.edx || want.ebx != cpu.ebx
+              || want.ebp != cpu.ebp || want.esi != cpu.esi || want.edi != cpu.edi || want.esp != cpu.esp
+              || memcmp(host, g_mem + low, 0x10);
+    if (bad)
+        fprintf(stderr, "recomp: hot check: 0x4cf5a0 differs (eax 0x%x host 0x%x, edx 0x%x host 0x%x)\n", cpu.eax,
+                want.eax, cpu.edx, want.edx);
+    return bad;
+}
+
+RT_WRAP(004cf5a0, get_contract)
+{
+    hot_mode_read();
+    if (hot_mode == 2) { o_004cf5a0(); return; }
+    if (hot_mode == 1) {
+        if (contract_check()) abort();
+        if (!hot_checked++) atexit(print_hot_checked);
+        return;
+    }
+    if (hot_mode == 3) { hot_test_fails += contract_check(); return; }
+    contract_host();
+}
+
+static void print_lidx(void)
+{
+    fprintf(stderr, "recomp: vacancy index: %llu builds, %llu hits\n", (unsigned long long)lidx_builds,
+            (unsigned long long)lidx_hits);
+}
+
 RT_WRAP(0069fc60, llist_has_id)
 {
     hot_mode_read();
@@ -523,8 +718,18 @@ RT_WRAP(0069fc60, llist_has_id)
         return;
     }
     if (hot_mode == 3) { hot_test_fails += llist_has_check(); return; }
+    static int once;
+    if (!once) { once = 1; atexit(print_lidx); }
     if (!llist_has_host()) o_0069fc60();
 }
+
+/* A linked-list member that changes the list drops the vacancy index when the list is the indexed one. */
+RT_WRAP(0068d040, llist_dtor) { lidx_drop(cpu.ecx); o_0068d040(); }
+RT_WRAP(0068d080, llist_clear) { lidx_drop(cpu.ecx); o_0068d080(); }
+RT_WRAP(0068d0d0, llist_add_tail) { lidx_drop(cpu.ecx); o_0068d0d0(); }
+RT_WRAP(0068d1f0, llist_remove) { lidx_drop(cpu.ecx); o_0068d1f0(); }
+RT_WRAP(0068d280, llist_remove_node) { lidx_drop(cpu.ecx); o_0068d280(); }
+RT_WRAP(0068d2f0, llist_copy_from) { lidx_drop(cpu.ecx); o_0068d2f0(); }
 
 /* Lists of 0 to 40 rows with ids from a small range, found and not found, a null argument and a count
  * below 0. Gives the count of calls that differ. */
@@ -667,6 +872,7 @@ int hot_loops_self_test(void)
     for (int len = 0; len <= 30; len++)
         for (int n = -2; n <= len; n++)
             for (int k = 0; k < 8; k++) {
+                lidx.valid = 0;                 /* this loop rewrites the ids; the index test below keeps them */
                 for (int i = 0; i < len; i++) {
                     seed = seed * 1103515245u + 12345u;
                     uint32_t node = nodes + (uint32_t)i * 10, data = datas + (uint32_t)i * 10;
@@ -687,6 +893,82 @@ int hot_loops_self_test(void)
                 if (rd32(g_mem, head + 0xa) != 0x5150u + (uint32_t)k) hot_test_fails++;
                 calls++;
             }
+    /* One list of 400 nodes and many searches: the index answers after the first, and matches the recompiled
+     * code. A new tail id, a dropped index and a shorter count each make the next search scan again. */
+    {
+        uint32_t knodes = rt_alloc(400 * 12), kdatas = rt_alloc(400 * 12);
+        for (int i = 0; i < 400; i++) {
+            uint32_t node = knodes + (uint32_t)i * 12, data = kdatas + (uint32_t)i * 12;
+            wr32(g_mem, node, data);
+            wr32(g_mem, node + 6, i + 1 < 400 ? node + 12 : 0);
+            wr32(g_mem, data + 6, (i % 17) == 0 ? 1u : (uint32_t)i * 3u + 10u);
+        }
+        wr16(g_mem, head, 400);
+        wr32(g_mem, head + 2, knodes);
+        lidx.valid = 0;
+        uint64_t builds = lidx_builds, hits = lidx_hits;
+        for (int k = 0; k < 100; k++) {
+            uint32_t id = k % 5 == 0 ? 1u : k == 99 ? 0xabcdefu : (uint32_t)k * 3u + 10u;
+            wr32(g_mem, idp, id);
+            cpu.ecx = this_;
+            cpu.edx = 0x1111u + (uint32_t)k;
+            cpu.eax = 0xfedcba98u;
+            cpu.ebx = 0x1111u, cpu.ebp = 0x2222u, cpu.esi = 0x3333u, cpu.edi = 0x4444u;
+            uint32_t args[1] = {idp};
+            rt_callback(LLIST_HAS, 1, args);
+            calls++;
+        }
+        if (lidx_builds != builds + 1 || lidx_hits != hits + 99) hot_test_fails++;
+        uint32_t last = knodes + 399 * 12, lastd = rd32(g_mem, last);
+        wr32(g_mem, lastd + 6, 0x77777777u);
+        builds = lidx_builds;
+        wr32(g_mem, idp, 0x77777777u);
+        cpu.ecx = this_;
+        uint32_t one[1] = {idp};
+        rt_callback(LLIST_HAS, 1, one);
+        calls++;
+        if (lidx_builds != builds + 1) hot_test_fails++;
+        lidx_drop(head);
+        builds = lidx_builds;
+        wr32(g_mem, idp, 1u);
+        cpu.ecx = this_;
+        rt_callback(LLIST_HAS, 1, one);
+        calls++;
+        if (lidx_builds != builds + 1) hot_test_fails++;
+        wr16(g_mem, head, 50);                  /* an id past the new count must not be found */
+        wr32(g_mem, idp, 190u);                 /* node 60, which the count of 50 does not reach */
+        cpu.ecx = this_;
+        cpu.edx = 0x2222u;
+        rt_callback(LLIST_HAS, 1, one);
+        calls++;
+    }
+    /* 0x4cf5a0: a null staff, an id that is not below the limit, a negative contract index and two real
+     * indexes. The two globals are put back. */
+    {
+        uint32_t g64 = rd32(g_mem, 0xae2364u), g0c = rd32(g_mem, 0xae2d0cu);
+        uint32_t table = rt_alloc(256), recs = rt_alloc(80 * 4), mgr = rt_alloc(4), staff = rt_alloc(8);
+        wr32(g_mem, 0xae2364u, 3);
+        wr32(g_mem, 0xae2d0cu, table);
+        wr32(g_mem, mgr, recs);
+        for (int i = 0; i < 256; i++) g_mem[table + (uint32_t)i] = 0;
+        wr32(g_mem, table, 0);                  /* id 0: contract index 0, the record at [this] */
+        wr32(g_mem, table + 79, 0xffffffffu);   /* id 1: a negative index */
+        wr32(g_mem, table + 158, 2);            /* id 2: the record at [this] + 160 */
+        uint32_t staffs[5] = {0, staff, staff, staff, staff};
+        uint32_t ids[5] = {0, 5, 1, 0, 2};
+        for (int k = 0; k < 5; k++) {
+            if (staffs[k]) wr32(g_mem, staff, ids[k]);
+            cpu.ecx = mgr;
+            cpu.edx = 0x9999u + (uint32_t)k;
+            cpu.eax = 0x1111u;
+            cpu.ebx = 0x1111u, cpu.ebp = 0x2222u, cpu.esi = 0x3333u, cpu.edi = 0x4444u;
+            uint32_t args[1] = {staffs[k]};
+            rt_callback(GET_CONTRACT, 1, args);
+            calls++;
+        }
+        wr32(g_mem, 0xae2364u, g64);
+        wr32(g_mem, 0xae2d0cu, g0c);
+    }
     hot_mode = -1;
     fprintf(stderr, "hot loops test: %d calls, %d differ\n", calls, hot_test_fails);
     return hot_test_fails;

@@ -52,6 +52,31 @@ void wrf80(uint8_t *m, uint32_t a, double v);
 #define W32(a, v) wr32(M, (a), (v))
 #define W64(a, v) wr64(M, (a), (v))
 
+/* fill_shortlist_slot 0x83f3a0 walks a position list at 0x83fa25. The entry is 12 bytes and the staff id
+ * is its first dword. The staff record is 110 bytes at [0xae23bc] + id * 110 (the scale at 0x83fa39), and
+ * the contract row is 79 bytes at [0xae2d0c] + id * 79 (the scale at 0x83fb46). The next candidates are
+ * not next to this one in either table. The list base is edx and the index is ecx at 0x83fa25; the count
+ * is the dword at esp + 0x8c (stored at 0x83fa07). rt_sl_streak (shortlist_scan.c) runs the tests before
+ * 0x83fcbb. */
+int rt_sl_streak(void);
+void rt_sl_note(uint32_t staff_id);
+/* get_future_transfer 0x8cca10 returns 0 without building its list when bit 0x10 of
+ * [[this+0x86e] + id*8] is clear (the jump at 0x8cca50). 1 when this call would take that path. */
+int rt_ft_clear(uint32_t self, uint32_t staff);
+static inline void rt_shortlist_ahead(const uint8_t *m, uint32_t list, uint32_t idx, uint32_t count)
+{
+    uint32_t base = rd32(m, 0xae23bcu), rows = rd32(m, 0xae2d0cu);
+    uint32_t last = idx + 6u;
+    if (last > count) last = count;
+    for (uint32_t i = idx + 1u; i < last; i++) {
+        uint32_t id = rd32(m, list + i * 12u);
+        uint32_t staff = base + id * 110u;
+        __builtin_prefetch(m + staff, 0, 3);
+        __builtin_prefetch(m + staff + 64u, 0, 3);
+        __builtin_prefetch(m + rows + id * 79u, 0, 3);
+    }
+}
+
 #define SYNC() (cpu.eax = eax, cpu.ecx = ecx, cpu.edx = edx, cpu.ebx = ebx, \
                 cpu.esp = esp, cpu.ebp = ebp, cpu.esi = esi, cpu.edi = edi)
 #define LOAD() (eax = cpu.eax, ecx = cpu.ecx, edx = cpu.edx, ebx = cpu.ebx, \
