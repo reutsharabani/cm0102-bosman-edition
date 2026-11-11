@@ -146,3 +146,25 @@ The same start, the clock fixed (`RECOMP_FIXED_CLOCK`), every league. The candid
 | The same loop, the next rows brought in | 39.6 s | 260,321,401 | the same 3558 lines |
 
 A copy of the contract index word at `[0xae2d0c] + id*79` stayed equal to the table for every `get_contract` of that run (115,154 ids, 0 differences). The status byte at +0xb of the same row did not: 1,494,317 loads differed from a copy taken at the start of the search. Using the word copy in `get_contract` took 41.9 s and was left out. The status byte is still read from the row.
+
+## The prefix of the candidate loop, in the host (11 November 2026)
+
+The same December 2025 start, every league, season 2025/26, `faster_days` and `changing_rules` on, the clock fixed, seed 1, dummy video and audio. Creating Shortlists is the time from the progress text to the manager-name screen. The staff file is the id stored at 0x840ad0, one per line.
+
+At 0x83fa25 the host walks the position list (`shortlist_scan.c`). A candidate who fails a test the recompiled loop fails at 0x83fa4f..0x83fcb5 is not returned to that loop. A candidate who reaches 0x83fcbb returns there, with the staff in esi, the entry in ebx, the contract or the club in edi, and the stack slots at +0x24, +0x34 and +0x40 set as the tail reads them. The human-club path returns at 0x83fabf. The end of the list returns at 0x840a99. The calls stay in the original order: the vacancy search 0x69fc60, `human_manager_is_human_club` 0x600a50 (the computer club writes the same scratch as the host copy and every other case calls the function), the wage 0x85fa00, the loan test 0x544590, and `get_contract` 0x4cf5a0. `RECOMP_SL_FAST=0` runs the recompiled loop from the `lea`.
+
+The wage is the signed day count from 0x85fa00 times the rate at contract + 0xc, divided by 7 as the `imul` at 0x83fc1c does. `Date::days_since` 0x54cdb0 reads the 8-byte date at contract + 0x2d and the game date at 0xae2c90, and its scratch at 0xae2470 is written only by that function. The result is kept by the contract index (`index * 80 + [contract manager]`, 0x4cf5d5) until the game date, the rate or that 8-byte date changes. The first use of a contract still calls 0x85fa00.
+
+At 0x83fecb, bit 0x10 clear in `[[this+0x86e] + id*8]` returns 0 from the call site. The clear path at 0x8ccb02 destroys the empty list and returns 0, and it does not store that byte. With the local at esp+0x84 equal to 0 the branch at 0x83fee1 is not taken, and the fall-through writes ecx and edx before they are read.
+
+`update_club_shortlist` 0x83a730 calls `allocate_transfer_budget` 0x83b6e0 at 0x83a76b, and that calls `fill_shortlist_slot` at 0x83bab7. `update_staff_status` 0x843e10 calls it at 0x844108. A day that rebuilds shortlists pays for this same walk. The matches played while the leagues are initialised are the other large cost of reaching the start date, and of a played day after it.
+
+| | Creating Shortlists | Staff ids at 0x840ad0 | Initialising Leagues, thread CPU |
+|---|---|---|---|
+| Recompiled loop (`RECOMP_SL_FAST=0`) | 38.4 s | 3773 lines | 19.8 s |
+| The prefix in the host | 28.8 s | the same 3773 lines | 19.6 s |
+| The prefix, and the wage kept by contract | 24.8 s | the same 3773 lines | 19.1 s |
+
+The host saw 261,960,293 candidates, rejected 176,628,747 of them, and sent 85,331,546 on to the tail. No candidate took the human-club path during this start (the manager is named after the search). The future-transfer bit was clear for 67,282,979 calls. The wage was computed for 25,138 contracts and reused 84,765,336 times. This tree's position lists are longer than the lists in the table above (260,321,401 candidates, 3558 lines): the check is the two runs against each other.
+
+The time that is left in Creating Shortlists is the tail after 0x83fcbb, where the roll at 0x90cfc0 and `value_player_for_club` 0x840d80 choose the staff. Those calls stay in order, so the same staff are signed. A played day still spends its match time in the match engine. Initialising Leagues, which is that match play before the start date, stayed on 19.1 to 19.8 s.

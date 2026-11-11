@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define CLASSIC_W 800u
 #define CLASSIC_H 600u
@@ -255,23 +256,36 @@ static uint32_t sye(uint32_t v) { return scale(v, rt_screen_h, CLASSIC_H, 1); }
  * the log changes (docs/research/2026-10-29-new-game-speed.md). */
 static int progress_log = -1;
 static char progress_text[64];
-static uint64_t progress_calls, progress_in_box, progress_since;
+static uint64_t progress_calls, progress_in_box, progress_since, progress_cpu;
+
+/* Thread CPU of this step. The wall clock in the same line holds the script's waits; this does not. */
+static uint64_t progress_thread_cpu(void)
+{
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
+        return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+#endif
+    return 0;
+}
 
 static void progress_log_line(uint32_t text, uint32_t step, uint32_t total)
 {
     char now[64] = "";
     if (text) snprintf(now, sizeof now, "%s", (const char *)(g_mem + text));
     uint64_t t = SDL_GetTicks64();
+    uint64_t cpu = progress_thread_cpu();
     if (strcmp(now, progress_text) || !step) {
         if (progress_text[0])
-            fprintf(stderr, "recomp: progress done \"%s\" %llu ms, %llu calls, %llu ms in the box\n", progress_text,
-                    (unsigned long long)(t - progress_since), (unsigned long long)progress_calls,
-                    (unsigned long long)progress_in_box);
+            fprintf(stderr, "recomp: progress done \"%s\" %llu ms, %llu calls, %llu ms in the box, cpu %llu ms\n",
+                    progress_text, (unsigned long long)(t - progress_since), (unsigned long long)progress_calls,
+                    (unsigned long long)progress_in_box, (unsigned long long)(cpu - progress_cpu));
         fprintf(stderr, "recomp: progress at %llu ms \"%s\" %d of %d\n", (unsigned long long)t, now,
                 (int32_t)step, (int32_t)total);
         snprintf(progress_text, sizeof progress_text, "%s", now);
         progress_calls = progress_in_box = 0;
         progress_since = t;
+        progress_cpu = cpu;
     }
     progress_calls++;
 }
